@@ -37,6 +37,7 @@ env.bak/
 venv.bak/
 .gen
 changelog.md
+uv.lock
 
 # PyCharm
 .idea/
