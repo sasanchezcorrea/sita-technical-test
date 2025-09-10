@@ -10,3 +10,9 @@ This repository contains solutions for the OptiFlight Coordinator technical test
 3. **Helm Implementation**: Helm chart and deployment artifacts are in the `helm` folder. Refer to its `README.md` for usage and configuration.
 
 Each part is documented in its respective README for setup and usage instructions.
+
+## Note:
+
+- We use uv to make all the installations and run the project in a virtual environment.
+- Use `uv sync` to install dependencies from `pyproject.toml` and `poetry.lock`.
+- Use `uv run <command>` to run commands within the virtual environment.
