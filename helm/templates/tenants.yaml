@@ -1,0 +1,91 @@
+{{- range .Values.tenants.airlines }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .namespace }}
+  labels:
+    {{- include "optiflight-coordinator.tenantLabels" $ | nindent 4 }}
+    optiflight.sita.aero/tenant: {{ .name }}
+    optiflight.sita.aero/airline: {{ .name }}
+---
+{{- if .resourceQuota }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ .namespace }}-quota
+  namespace: {{ .namespace }}
+  labels:
+    {{- include "optiflight-coordinator.tenantLabels" $ | nindent 4 }}
+    optiflight.sita.aero/tenant: {{ .name }}
+spec:
+  hard:
+    {{- toYaml .resourceQuota | nindent 4 }}
+{{- end }}
+---
+{{- if and .networkPolicy .networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .namespace }}-network-policy
+  namespace: {{ .namespace }}
+  labels:
+    {{- include "optiflight-coordinator.tenantLabels" $ | nindent 4 }}
+    optiflight.sita.aero/tenant: {{ .name }}
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  {{- if .networkPolicy.ingress }}
+  ingress:
+    {{- toYaml .networkPolicy.ingress | nindent 4 }}
+  {{- end }}
+  {{- if .networkPolicy.egress }}
+  egress:
+    {{- toYaml .networkPolicy.egress | nindent 4 }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: optimization-runner
+  namespace: {{ .namespace }}
+  labels:
+    {{- include "optiflight-coordinator.tenantLabels" $ | nindent 4 }}
+    optiflight.sita.aero/tenant: {{ .name }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: optimization-runner
+  namespace: {{ .namespace }}
+  labels:
+    {{- include "optiflight-coordinator.tenantLabels" $ | nindent 4 }}
+    optiflight.sita.aero/tenant: {{ .name }}
+rules:
+- apiGroups: [""]
+  resources: ["pods", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: optimization-runner
+  namespace: {{ .namespace }}
+  labels:
+    {{- include "optiflight-coordinator.tenantLabels" $ | nindent 4 }}
+    optiflight.sita.aero/tenant: {{ .name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: optimization-runner
+subjects:
+- kind: ServiceAccount
+  name: optimization-runner
+  namespace: {{ .namespace }}
+{{- end }}

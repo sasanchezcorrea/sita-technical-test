@@ -1,0 +1,33 @@
+{{- if .Values.rbac.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "optiflight-coordinator.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "optiflight-coordinator.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "optiflight-coordinator.fullname" . }}
+  labels:
+    {{- include "optiflight-coordinator.labels" . | nindent 4 }}
+rules:
+  {{- toYaml .Values.rbac.rules | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "optiflight-coordinator.fullname" . }}
+  labels:
+    {{- include "optiflight-coordinator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "optiflight-coordinator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "optiflight-coordinator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

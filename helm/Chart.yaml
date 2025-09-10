@@ -1,0 +1,57 @@
+apiVersion: v2
+name: optiflight-coordinator
+description: |
+  OptiFlight Coordinator - A professional-grade, multi-tenant flight optimization 
+  job processing system designed for high-availability and scalability in Kubernetes.
+  
+  Features:
+  - Multi-tenant architecture with namespace isolation
+  - Event-driven processing with Kafka integration
+  - Auto-scaling capabilities with HPA
+  - Comprehensive monitoring and observability
+  - Resource quotas and RBAC security
+  - Production-ready with health checks and metrics
+
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+keywords:
+  - sita
+  - aviation
+  - optimization
+  - kubernetes
+  - multi-tenant
+  - microservices
+
+home: https://github.com/sita/optiflight-coordinator
+sources:
+  - https://github.com/sita/optiflight-coordinator
+
+maintainers:
+  - name: SITA Engineering Team
+    email: engineering@sita.aero
+    url: https://sita.aero
+
+dependencies:
+  - name: postgresql
+    version: "12.12.10"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
+  - name: redis
+    version: "18.1.5"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: redis.enabled
+  - name: kafka
+    version: "25.3.5"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: kafka.enabled
+
+annotations:
+  category: Aviation
+  licenses: Proprietary
+  images: |
+    - name: job-processor
+      image: sita/optiflight-coordinator:1.0.0
+    - name: module-simulator
+      image: sita/optimization-module:latest

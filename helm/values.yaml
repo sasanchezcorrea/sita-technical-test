@@ -1,0 +1,393 @@
+# OptiFlight Coordinator Helm Chart Values
+# Production-ready configuration for multi-tenant flight optimization
+
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+
+# Application configuration
+app:
+  name: optiflight-coordinator
+  version: "1.0.0"
+  environment: production
+  
+# Image configuration
+image:
+  registry: sita
+  repository: optiflight-coordinator
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# Replica configuration
+replicaCount: 3
+
+# Resource configuration
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# Auto-scaling configuration
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+
+# Pod configuration
+podLabels:
+  app.kubernetes.io/component: job-processor
+  optiflight.sita.aero/tier: control-plane
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8000"
+  prometheus.io/path: "/metrics"
+
+# Security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+  capabilities:
+    drop:
+    - ALL
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: optiflight-coordinator.sita.aero
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: optiflight-coordinator-tls
+      hosts:
+        - optiflight-coordinator.sita.aero
+
+# Health checks
+healthCheck:
+  enabled: true
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  startupProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+
+# Environment variables
+env:
+  - name: ENVIRONMENT
+    value: "production"
+  - name: LOG_LEVEL
+    value: "INFO"
+  - name: METRICS_ENABLED
+    value: "true"
+  - name: IN_CLUSTER
+    value: "true"
+  - name: KUBERNETES_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+
+# Configuration from ConfigMap
+configMap:
+  create: true
+  data:
+    app_name: "OptiFlight Coordinator"
+    app_version: "1.0.0"
+    rate_limit_per_minute: "1000"
+    max_concurrent_jobs_per_tenant: "10"
+    module_timeout_seconds: "300"
+
+# Secrets configuration
+secrets:
+  create: true
+  data: {}
+    # database_url: ""
+    # redis_password: ""
+    # kafka_password: ""
+
+# Multi-tenant configuration
+tenants:
+  # Example tenant configurations
+  airlines:
+    - name: abc
+      namespace: airline-abc
+      resourceQuota:
+        requests.cpu: "4"
+        requests.memory: "8Gi"
+        limits.cpu: "16"
+        limits.memory: "32Gi"
+        pods: "20"
+        persistentvolumeclaims: "10"
+      networkPolicy:
+        enabled: true
+        ingress:
+          - from:
+            - namespaceSelector:
+                matchLabels:
+                  name: optiflight-system
+          - from:
+            - namespaceSelector:
+                matchLabels:
+                  name: airline-abc
+        egress:
+          - to: []
+    - name: xyz
+      namespace: airline-xyz
+      resourceQuota:
+        requests.cpu: "2"
+        requests.memory: "4Gi"
+        limits.cpu: "8"
+        limits.memory: "16Gi"
+        pods: "10"
+        persistentvolumeclaims: "5"
+      networkPolicy:
+        enabled: true
+
+# RBAC configuration
+rbac:
+  create: true
+  serviceAccountName: optiflight-coordinator
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "namespaces", "configmaps", "secrets"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["batch"]
+      resources: ["jobs"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: [""]
+      resources: ["resourcequotas"]
+      verbs: ["get", "list", "watch", "create", "update", "patch"]
+    - apiGroups: ["networking.k8s.io"]
+      resources: ["networkpolicies"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+# Monitoring configuration
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      app: optiflight-coordinator
+  grafanaDashboard:
+    enabled: true
+    namespace: monitoring
+  alerts:
+    enabled: true
+    namespace: monitoring
+
+# Database configuration (PostgreSQL)
+postgresql:
+  enabled: true
+  auth:
+    enablePostgresUser: true
+    postgresPassword: "secure-postgres-password"
+    username: "optiflight"
+    password: "secure-optiflight-password"
+    database: "optiflight_db"
+  primary:
+    persistence:
+      enabled: true
+      size: 50Gi
+      storageClass: "gp3"
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "1000m"
+
+# Redis configuration
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    password: "secure-redis-password"
+  master:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: "gp3"
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+
+# Kafka configuration
+kafka:
+  enabled: true
+  auth:
+    clientProtocol: sasl
+    sasl:
+      mechanisms: plain
+      users:
+        - user: optiflight
+          password: secure-kafka-password
+  persistence:
+    enabled: true
+    size: 100Gi
+    storageClass: "gp3"
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+  zookeeper:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: "gp3"
+
+# Persistence for application logs and data
+persistence:
+  enabled: true
+  accessMode: ReadWriteOnce
+  size: 10Gi
+  storageClass: "default"
+  annotations: {}
+
+# Node selection
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity rules
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - optiflight-coordinator
+        topologyKey: kubernetes.io/hostname
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  maxUnavailable: ""
+
+# Network policies
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: ingress-nginx
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: monitoring
+  egress:
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            name: airline-abc
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            name: airline-xyz
+    - to: []
+      ports:
+      - protocol: TCP
+        port: 53
+      - protocol: UDP
+        port: 53
+
+# Backup configuration
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  retention: "30d"
+  s3:
+    bucket: "optiflight-backups"
+    region: "us-east-1"
+
+# CI/CD Integration
+cicd:
+  enabled: false
+  gitops:
+    repository: "https://github.com/sita/optiflight-config"
+    branch: "main"
+    path: "environments/production"
