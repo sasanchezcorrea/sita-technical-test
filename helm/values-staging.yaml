@@ -1,0 +1,249 @@
+# OptiFlight Coordinator - Staging Environment Values
+# Phase 14: Release Pipeline & Environments
+#
+# Staging-specific overrides with reduced resources and debug enabled
+
+# Application configuration
+app:
+  name: optiflight-coordinator
+  version: "1.0.0"
+  environment: staging
+
+# Image configuration
+image:
+  registry: sita
+  repository: optiflight-coordinator
+  tag: "latest"  # Auto-deploy latest from main branch
+  pullPolicy: Always
+
+# Reduced replica count for staging
+replicaCount: 1
+
+# Reduced resources for staging
+resources:
+  limits:
+    cpu: 500m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+# Auto-scaling configuration (reduced)
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Pod labels
+podLabels:
+  app.kubernetes.io/component: job-processor
+  optiflight.sita.aero/tier: control-plane
+  environment: staging
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8000"
+  prometheus.io/path: "/metrics"
+
+# Ingress configuration for staging
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+  hosts:
+    - host: optiflight-staging.sita.aero
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: optiflight-staging-tls
+      hosts:
+        - optiflight-staging.sita.aero
+
+# Environment variables (from ConfigMap)
+envFrom:
+  - configMapRef:
+      name: optiflight-config
+
+# Database configuration (staging)
+postgresql:
+  enabled: true
+  architecture: standalone  # No replication in staging
+  auth:
+    postgresPassword: "staging-postgres-pass"
+    username: "optiflight"
+    password: "staging-optiflight-pass"
+    database: "optiflight_staging"
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: "standard"
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+  metrics:
+    enabled: true
+
+# Redis configuration (staging)
+redis:
+  enabled: true
+  architecture: standalone  # No cluster in staging
+  auth:
+    enabled: true
+    password: "staging-redis-pass"
+  master:
+    persistence:
+      enabled: true
+      size: 5Gi
+      storageClass: "standard"
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "50m"
+      limits:
+        memory: "512Mi"
+        cpu: "250m"
+  sentinel:
+    enabled: false  # No sentinel in staging
+  metrics:
+    enabled: true
+
+# Kafka configuration (staging)
+kafka:
+  enabled: true
+  replicaCount: 1  # Single broker in staging
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: "standard"
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  zookeeper:
+    enabled: true
+    replicaCount: 1
+    persistence:
+      enabled: true
+      size: 5Gi
+
+# RabbitMQ configuration (staging)
+rabbitmq:
+  enabled: true
+  replicaCount: 1  # Single node in staging
+  auth:
+    username: optiflight
+    password: staging-rabbitmq-pass
+    erlangCookie: staging-erlang-cookie
+  clustering:
+    enabled: false
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: "standard"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# KEDA configuration (staging)
+keda:
+  enabled: true
+  kafka:
+    enabled: true
+    minReplicaCount: 1
+    maxReplicaCount: 5
+    topics:
+      - name: optiflight-events
+        lagThreshold: "10"
+  rabbitmq:
+    enabled: true
+    minReplicaCount: 1
+    maxReplicaCount: 5
+    queues:
+      - name: optiflight.events
+        threshold: "10"
+
+# Monitoring
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    interval: 30s
+
+# Pod disruption budget (relaxed for staging)
+podDisruptionBudget:
+  enabled: false
+
+# Backup (disabled in staging)
+backup:
+  enabled: false
+
+# External Services Configuration
+externalServices:
+  mode: mock  # "mock" or "real"
+
+  # Mock services configuration
+  mockServices:
+    enabled: true
+    opticore:
+      image: registry.sita.aero/optiflight/mock-opticore
+      tag: "1.0.0"
+      replicas: 1
+      port: 8001
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+    freyaClimb:
+      image: registry.sita.aero/optiflight/mock-freya-climb
+      tag: "1.0.0"
+      replicas: 1
+      port: 8002
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+    freyaLevel:
+      image: registry.sita.aero/optiflight/mock-freya-level
+      tag: "1.0.0"
+      replicas: 1
+      port: 8003
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+
+# CI/CD Integration
+cicd:
+  enabled: true
+  gitops:
+    repository: "https://github.com/sita/optiflight-config"
+    branch: "main"
+    path: "environments/staging"

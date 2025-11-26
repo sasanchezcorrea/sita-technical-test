@@ -1,0 +1,64 @@
+---
+# OptiFlight Coordinator - Multi-Environment Namespaces
+# Phase 14: Release Pipeline & Environments
+#
+# This file creates 3 namespaces for the release train:
+# - optiflight-staging: Auto-deployed from main branch
+# - optiflight-preprod: Manual promotion for final validation
+# - optiflight-prod: Production environment with manual approval
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: optiflight-staging
+  labels:
+    name: optiflight-staging
+    environment: staging
+    team: optiflight
+    managed-by: helm
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    description: "Staging environment for OptiFlight Coordinator"
+    auto-deploy: "true"
+    promotion-to: "preprod"
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: optiflight-preprod
+  labels:
+    name: optiflight-preprod
+    environment: preprod
+    team: optiflight
+    managed-by: helm
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    description: "Pre-production environment for final validation"
+    auto-deploy: "false"
+    promotion-to: "prod"
+    requires-approval: "true"
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: optiflight-prod
+  labels:
+    name: optiflight-prod
+    environment: production
+    team: optiflight
+    managed-by: helm
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    description: "Production environment for OptiFlight Coordinator"
+    auto-deploy: "false"
+    requires-approval: "true"
+    high-availability: "true"
+    monitoring: "enhanced"

@@ -1,0 +1,422 @@
+# OptiFlight Coordinator - Production Environment Values
+# Phase 14: Release Pipeline & Environments
+#
+# Production configuration with full HA, enhanced monitoring, and strict security
+
+# Application configuration
+app:
+  name: optiflight-coordinator
+  version: "1.0.0"
+  environment: production
+
+# Image configuration
+image:
+  registry: sita
+  repository: optiflight-coordinator
+  tag: ""  # Manually promoted from preprod (set by CI/CD)
+  pullPolicy: IfNotPresent
+
+# Full replica count for production
+replicaCount: 3
+
+# Full resources for production
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# Auto-scaling configuration
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5 minutes
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60  # 1 minute
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+
+# Pod labels
+podLabels:
+  app.kubernetes.io/component: job-processor
+  optiflight.sita.aero/tier: control-plane
+  environment: production
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8000"
+  prometheus.io/path: "/metrics"
+
+# Ingress configuration for production
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/rate-limit: "60"
+  hosts:
+    - host: optiflight.sita.aero
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: optiflight-prod-tls
+      hosts:
+        - optiflight.sita.aero
+
+# Environment variables (from ConfigMap)
+envFrom:
+  - configMapRef:
+      name: optiflight-config
+
+# Database configuration (production with full HA)
+postgresql:
+  enabled: true
+  architecture: replication
+  replicaCount: 2  # 2 read replicas
+  auth:
+    postgresPassword: "prod-postgres-pass-change-me"
+    username: "optiflight"
+    password: "prod-optiflight-pass-change-me"
+    database: "optiflight_prod"
+  primary:
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClass: "gp3"
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "4Gi"
+        cpu: "2000m"
+    extendedConfiguration: |-
+      max_connections = 200
+      shared_buffers = 1GB
+      effective_cache_size = 3GB
+      maintenance_work_mem = 256MB
+      checkpoint_completion_target = 0.9
+      wal_buffers = 16MB
+      default_statistics_target = 100
+      random_page_cost = 1.1
+      effective_io_concurrency = 200
+      work_mem = 5MB
+      min_wal_size = 1GB
+      max_wal_size = 4GB
+      max_wal_senders = 10
+      wal_keep_size = 1GB
+      hot_standby = on
+      log_min_duration_statement = 1000
+      log_connections = on
+      log_disconnections = on
+  readReplicas:
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClass: "gp3"
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "4Gi"
+        cpu: "2000m"
+  metrics:
+    enabled: true
+  backup:
+    enabled: true
+    cronjob:
+      schedule: "0 2 * * *"
+      storage:
+        size: 200Gi
+        storageClass: "gp3"
+    retention:
+      full: 7
+      differential: 14
+
+# Redis configuration (production with full cluster)
+redis:
+  enabled: true
+  architecture: cluster
+  cluster:
+    enabled: true
+    nodes: 6  # 3 masters + 3 replicas
+    replicas: 1
+  auth:
+    enabled: true
+    password: "prod-redis-pass-change-me"
+  master:
+    count: 3
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: "gp3"
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+    configuration: |-
+      maxmemory 1.5gb
+      maxmemory-policy allkeys-lru
+      appendonly yes
+      appendfsync everysec
+      save 900 1
+      save 300 10
+      save 60 10000
+  replica:
+    replicaCount: 3
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: "gp3"
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+  sentinel:
+    enabled: true
+    quorum: 2
+  metrics:
+    enabled: true
+
+# Kafka configuration (production with full HA)
+kafka:
+  enabled: true
+  replicaCount: 3
+  persistence:
+    enabled: true
+    size: 100Gi
+    storageClass: "gp3"
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "8Gi"
+      cpu: "4000m"
+  config: |-
+    default.replication.factor=3
+    min.insync.replicas=2
+    offsets.topic.replication.factor=3
+    transaction.state.log.replication.factor=3
+    transaction.state.log.min.isr=2
+    log.retention.hours=48
+    log.retention.bytes=107374182400
+    num.network.threads=8
+    num.io.threads=16
+  zookeeper:
+    enabled: true
+    replicaCount: 3
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: "gp3"
+  metrics:
+    kafka:
+      enabled: true
+    jmx:
+      enabled: true
+
+# RabbitMQ configuration (production with full HA)
+rabbitmq:
+  enabled: true
+  replicaCount: 3
+  auth:
+    username: optiflight
+    password: prod-rabbitmq-pass-change-me
+    erlangCookie: prod-erlang-cookie-change-me
+  clustering:
+    enabled: true
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: "gp3"
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+  metrics:
+    enabled: true
+
+# KEDA configuration (production)
+keda:
+  enabled: true
+  kafka:
+    enabled: true
+    minReplicaCount: 3
+    maxReplicaCount: 20
+    pollingInterval: 30
+    cooldownPeriod: 300
+    topics:
+      - name: optiflight-events
+        lagThreshold: "50"
+      - name: optiflight-position-reports
+        lagThreshold: "30"
+      - name: optiflight-flight-plans
+        lagThreshold: "30"
+  rabbitmq:
+    enabled: true
+    minReplicaCount: 3
+    maxReplicaCount: 20
+    pollingInterval: 30
+    cooldownPeriod: 300
+    queues:
+      - name: optiflight.events
+        threshold: "50"
+
+# Monitoring (enhanced for production)
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    interval: 30s
+    scrapeTimeout: 10s
+  grafanaDashboard:
+    enabled: true
+    namespace: monitoring
+  alerts:
+    enabled: true
+    namespace: monitoring
+
+# Pod disruption budget (strict for production)
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# Affinity rules (strict anti-affinity for production)
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+    - labelSelector:
+        matchExpressions:
+        - key: app.kubernetes.io/name
+          operator: In
+          values:
+          - optiflight-coordinator
+      topologyKey: kubernetes.io/hostname
+
+# Topology spread constraints (for zone distribution)
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: optiflight-coordinator
+
+# Network policies (strict in production)
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: ingress-nginx
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: monitoring
+  egress:
+    - to: []
+      ports:
+      - protocol: TCP
+        port: 53
+      - protocol: UDP
+        port: 53
+      - protocol: TCP
+        port: 443
+      - protocol: TCP
+        port: 5432
+      - protocol: TCP
+        port: 6379
+      - protocol: TCP
+        port: 9092
+
+# Backup (full backup in production)
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  retention: "30d"
+  s3:
+    bucket: "optiflight-prod-backups"
+    region: "us-east-1"
+
+# External Services Configuration
+externalServices:
+  mode: mock  # "mock" or "real" (will switch to real after Phase 2)
+
+  # Mock services configuration (Phase 1)
+  mockServices:
+    enabled: true
+    opticore:
+      image: registry.sita.aero/optiflight/mock-opticore
+      tag: "1.0.0"
+      replicas: 2
+      port: 8001
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 1Gi
+    freyaClimb:
+      image: registry.sita.aero/optiflight/mock-freya-climb
+      tag: "1.0.0"
+      replicas: 2
+      port: 8002
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 1Gi
+    freyaLevel:
+      image: registry.sita.aero/optiflight/mock-freya-level
+      tag: "1.0.0"
+      replicas: 2
+      port: 8003
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 1Gi
+
+# CI/CD Integration
+cicd:
+  enabled: true
+  gitops:
+    repository: "https://github.com/sita/optiflight-config"
+    branch: "main"
+    path: "environments/production"

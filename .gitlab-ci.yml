@@ -1,0 +1,459 @@
+# GitLab CI/CD Pipeline for OptiFlight Coordinator
+# Phase 14: Release Pipeline & Environments
+# Supports: Staging → Pre-prod → Production release train
+
+stages:
+  - lint
+  - test
+  - build
+  - deploy-staging
+  - integration-test
+  - deploy-preprod
+  - deploy-prod
+  - rollback
+
+variables:
+  # Docker registry
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  IMAGE_NAME: $CI_REGISTRY_IMAGE/optiflight-coordinator
+
+  # Kubernetes namespaces
+  NAMESPACE_STAGING: optiflight-staging
+  NAMESPACE_PREPROD: optiflight-preprod
+  NAMESPACE_PROD: optiflight-prod
+
+  # Helm release names
+  HELM_RELEASE_STAGING: optiflight-staging
+  HELM_RELEASE_PREPROD: optiflight-preprod
+  HELM_RELEASE_PROD: optiflight-prod
+
+# Cache dependencies
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .venv/
+    - .cache/
+
+# ============================================================================
+# Stage 1: Lint & Code Quality
+# ============================================================================
+
+lint:ruff:
+  stage: lint
+  image: python:3.11-slim
+  before_script:
+    - pip install uv
+    - uv venv
+    - source .venv/bin/activate
+    - uv pip install ruff
+  script:
+    - ruff check job_processor/
+    - ruff format --check job_processor/
+  only:
+    - merge_requests
+    - main
+    - tags
+
+lint:mypy:
+  stage: lint
+  image: python:3.11-slim
+  before_script:
+    - pip install uv
+    - uv venv
+    - source .venv/bin/activate
+    - uv pip install -r job_processor/requirements.txt
+    - uv pip install mypy
+  script:
+    - mypy job_processor/app --ignore-missing-imports
+  only:
+    - merge_requests
+    - main
+    - tags
+  allow_failure: true
+
+lint:bandit:
+  stage: lint
+  image: python:3.11-slim
+  before_script:
+    - pip install bandit
+  script:
+    - bandit -r job_processor/app -ll
+  only:
+    - merge_requests
+    - main
+    - tags
+
+# ============================================================================
+# Stage 2: Unit & Integration Tests
+# ============================================================================
+
+test:unit:
+  stage: test
+  image: python:3.11-slim
+  services:
+    - postgres:15-alpine
+    - redis:7-alpine
+  variables:
+    POSTGRES_DB: optiflight_test
+    POSTGRES_USER: optiflight
+    POSTGRES_PASSWORD: test123
+    DATABASE_URL: postgresql://optiflight:test123@postgres:5432/optiflight_test
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+  before_script:
+    - pip install uv
+    - uv venv
+    - source .venv/bin/activate
+    - uv pip install -r job_processor/requirements.txt
+    - uv pip install pytest pytest-cov pytest-asyncio
+  script:
+    - cd job_processor
+    - pytest tests/ -v --cov=app --cov-report=xml --cov-report=term
+  coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: job_processor/coverage.xml
+    paths:
+      - job_processor/coverage.xml
+    expire_in: 30 days
+  only:
+    - merge_requests
+    - main
+    - tags
+
+# ============================================================================
+# Stage 3: Build & Push Docker Image
+# ============================================================================
+
+build:docker:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    # Build image
+    - |
+      docker build \
+        --build-arg VERSION=$CI_COMMIT_SHORT_SHA \
+        --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+        --build-arg VCS_REF=$CI_COMMIT_SHA \
+        -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA \
+        -t $IMAGE_NAME:$CI_COMMIT_REF_SLUG \
+        -f job_processor/Dockerfile \
+        .
+
+    # Tag with version for tags
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        docker tag $IMAGE_NAME:$CI_COMMIT_SHORT_SHA $IMAGE_NAME:$CI_COMMIT_TAG
+        docker tag $IMAGE_NAME:$CI_COMMIT_SHORT_SHA $IMAGE_NAME:latest
+      fi
+
+    # Push all tags
+    - docker push $IMAGE_NAME --all-tags
+
+    # Security scan with Trivy
+    - apk add --no-cache curl
+    - |
+      curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+    - trivy image --exit-code 0 --severity HIGH,CRITICAL $IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+  only:
+    - main
+    - tags
+
+build:mock-services:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    # Build OptiCore mock service
+    - |
+      docker build \
+        -t $CI_REGISTRY_IMAGE/mock-opticore:$CI_COMMIT_SHORT_SHA \
+        -t $CI_REGISTRY_IMAGE/mock-opticore:1.0.0 \
+        -f mock-services/opticore/Dockerfile \
+        mock-services/opticore/
+      docker push $CI_REGISTRY_IMAGE/mock-opticore:$CI_COMMIT_SHORT_SHA
+      docker push $CI_REGISTRY_IMAGE/mock-opticore:1.0.0
+
+    # Build Freya Climb mock service
+    - |
+      docker build \
+        -t $CI_REGISTRY_IMAGE/mock-freya-climb:$CI_COMMIT_SHORT_SHA \
+        -t $CI_REGISTRY_IMAGE/mock-freya-climb:1.0.0 \
+        -f mock-services/freya-climb/Dockerfile \
+        mock-services/freya-climb/
+      docker push $CI_REGISTRY_IMAGE/mock-freya-climb:$CI_COMMIT_SHORT_SHA
+      docker push $CI_REGISTRY_IMAGE/mock-freya-climb:1.0.0
+
+    # Build Freya Level mock service
+    - |
+      docker build \
+        -t $CI_REGISTRY_IMAGE/mock-freya-level:$CI_COMMIT_SHORT_SHA \
+        -t $CI_REGISTRY_IMAGE/mock-freya-level:1.0.0 \
+        -f mock-services/freya-level/Dockerfile \
+        mock-services/freya-level/
+      docker push $CI_REGISTRY_IMAGE/mock-freya-level:$CI_COMMIT_SHORT_SHA
+      docker push $CI_REGISTRY_IMAGE/mock-freya-level:1.0.0
+  only:
+    - main
+    - tags
+
+# ============================================================================
+# Stage 4: Deploy to Staging (Automatic)
+# ============================================================================
+
+deploy:staging:
+  stage: deploy-staging
+  image: alpine/helm:latest
+  before_script:
+    - apk add --no-cache curl kubectl
+    - kubectl config use-context staging
+  script:
+    # Deploy with Helm
+    - |
+      helm upgrade --install $HELM_RELEASE_STAGING ./helm \
+        --namespace $NAMESPACE_STAGING \
+        --create-namespace \
+        --values helm/values-staging.yaml \
+        --set image.tag=$CI_COMMIT_SHORT_SHA \
+        --set image.repository=$IMAGE_NAME \
+        --wait --timeout 5m
+
+    # Wait for rollout
+    - kubectl rollout status deployment/optiflight-coordinator -n $NAMESPACE_STAGING --timeout=5m
+
+    # Run smoke tests
+    - |
+      kubectl run smoke-test-$CI_COMMIT_SHORT_SHA \
+        --image=curlimages/curl:latest \
+        --restart=Never \
+        --namespace=$NAMESPACE_STAGING \
+        --command -- curl -f http://optiflight-api:8000/health || exit 1
+
+    # Cleanup smoke test pod
+    - kubectl delete pod smoke-test-$CI_COMMIT_SHORT_SHA -n $NAMESPACE_STAGING
+  environment:
+    name: staging
+    url: https://optiflight-staging.sita.aero
+    on_stop: cleanup:staging
+  only:
+    - main
+  dependencies:
+    - build:docker
+
+cleanup:staging:
+  stage: deploy-staging
+  image: alpine/helm:latest
+  before_script:
+    - kubectl config use-context staging
+  script:
+    - helm uninstall $HELM_RELEASE_STAGING --namespace $NAMESPACE_STAGING
+  when: manual
+  environment:
+    name: staging
+    action: stop
+
+# ============================================================================
+# Stage 5: Integration Tests (Against Staging)
+# ============================================================================
+
+integration-test:staging:
+  stage: integration-test
+  image: python:3.11-slim
+  before_script:
+    - pip install uv
+    - uv venv
+    - source .venv/bin/activate
+    - uv pip install -r job_processor/requirements.txt
+    - uv pip install pytest pytest-asyncio httpx
+  script:
+    - export API_URL=https://optiflight-staging.sita.aero
+    - cd job_processor
+    - pytest tests/test_integration.py -v --api-url=$API_URL
+  only:
+    - main
+  dependencies:
+    - deploy:staging
+
+# ============================================================================
+# Stage 6: Deploy to Pre-Production (Manual)
+# ============================================================================
+
+deploy:preprod:
+  stage: deploy-preprod
+  image: alpine/helm:latest
+  before_script:
+    - apk add --no-cache curl kubectl
+    - kubectl config use-context preprod
+  script:
+    # Deploy with Helm
+    - |
+      helm upgrade --install $HELM_RELEASE_PREPROD ./helm \
+        --namespace $NAMESPACE_PREPROD \
+        --create-namespace \
+        --values helm/values-preprod.yaml \
+        --set image.tag=$CI_COMMIT_SHORT_SHA \
+        --set image.repository=$IMAGE_NAME \
+        --wait --timeout 5m
+
+    # Run validation
+    - ./scripts/validate-deployment.sh preprod
+  environment:
+    name: preprod
+    url: https://optiflight-preprod.sita.aero
+    on_stop: cleanup:preprod
+  when: manual
+  only:
+    - main
+  dependencies:
+    - build:docker
+    - integration-test:staging
+
+cleanup:preprod:
+  stage: deploy-preprod
+  image: alpine/helm:latest
+  before_script:
+    - kubectl config use-context preprod
+  script:
+    - helm uninstall $HELM_RELEASE_PREPROD --namespace $NAMESPACE_PREPROD
+  when: manual
+  environment:
+    name: preprod
+    action: stop
+
+# ============================================================================
+# Stage 7: Deploy to Production (Manual - Tags Only)
+# ============================================================================
+
+deploy:production:
+  stage: deploy-prod
+  image: alpine/helm:latest
+  before_script:
+    - apk add --no-cache curl kubectl
+    - kubectl config use-context production
+  script:
+    # Deploy with Helm
+    - |
+      helm upgrade --install $HELM_RELEASE_PROD ./helm \
+        --namespace $NAMESPACE_PROD \
+        --create-namespace \
+        --values helm/values-prod.yaml \
+        --set image.tag=$CI_COMMIT_TAG \
+        --set image.repository=$IMAGE_NAME \
+        --wait --timeout 10m
+
+    # Run comprehensive validation
+    - ./scripts/validate-deployment.sh production
+
+    # Notify success
+    - |
+      if [ -n "$SLACK_WEBHOOK" ]; then
+        curl -X POST $SLACK_WEBHOOK \
+          -H 'Content-Type: application/json' \
+          -d "{\"text\":\"✅ OptiFlight $CI_COMMIT_TAG deployed to PRODUCTION\"}"
+      fi
+  environment:
+    name: production
+    url: https://api.optiflight.com
+    on_stop: rollback:production
+  when: manual
+  only:
+    - tags
+  dependencies:
+    - build:docker
+
+# ============================================================================
+# Stage 8: Rollback Production (Emergency)
+# ============================================================================
+
+rollback:production:
+  stage: rollback
+  image: alpine/helm:latest
+  before_script:
+    - apk add --no-cache curl kubectl
+    - kubectl config use-context production
+  script:
+    # Rollback to previous release
+    - helm rollback $HELM_RELEASE_PROD --namespace $NAMESPACE_PROD
+
+    # Wait for rollback
+    - kubectl rollout status deployment/optiflight-coordinator -n $NAMESPACE_PROD --timeout=5m
+
+    # Verify health
+    - |
+      kubectl run rollback-check-$CI_COMMIT_SHORT_SHA \
+        --image=curlimages/curl:latest \
+        --restart=Never \
+        --namespace=$NAMESPACE_PROD \
+        --command -- curl -f http://optiflight-api:8000/health || exit 1
+
+    # Notify rollback
+    - |
+      if [ -n "$SLACK_WEBHOOK" ]; then
+        curl -X POST $SLACK_WEBHOOK \
+          -H 'Content-Type: application/json' \
+          -d "{\"text\":\"⚠️  OptiFlight PRODUCTION rolled back\"}"
+      fi
+  environment:
+    name: production
+    action: stop
+  when: manual
+  only:
+    - tags
+
+# ============================================================================
+# Helm Chart Validation (On MR)
+# ============================================================================
+
+validate:helm:
+  stage: lint
+  image: alpine/helm:latest
+  script:
+    # Lint Helm chart
+    - helm lint ./helm
+
+    # Template validation
+    - helm template test ./helm --values helm/values-staging.yaml > /dev/null
+    - helm template test ./helm --values helm/values-preprod.yaml > /dev/null
+    - helm template test ./helm --values helm/values-prod.yaml > /dev/null
+  only:
+    - merge_requests
+    - main
+
+# ============================================================================
+# Security Scanning
+# ============================================================================
+
+security:container-scan:
+  stage: build
+  image: aquasec/trivy:latest
+  script:
+    - trivy image --exit-code 1 --severity CRITICAL $IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+  allow_failure: true
+  only:
+    - main
+    - tags
+  dependencies:
+    - build:docker
+
+security:dependency-scan:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - pip install pip-audit
+  script:
+    - pip-audit -r job_processor/requirements.txt
+  allow_failure: true
+  only:
+    - merge_requests
+    - main
+    - tags

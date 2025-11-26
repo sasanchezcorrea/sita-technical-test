@@ -1,0 +1,191 @@
+{{- if .Values.externalServices.mockServices.enabled }}
+---
+# OptiCore Mock Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-opticore
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: mock-opticore
+    app.kubernetes.io/name: mock-opticore
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.externalServices.mockServices.opticore.replicas }}
+  selector:
+    matchLabels:
+      app: mock-opticore
+  template:
+    metadata:
+      labels:
+        app: mock-opticore
+    spec:
+      containers:
+      - name: opticore
+        image: "{{ .Values.externalServices.mockServices.opticore.image }}:{{ .Values.externalServices.mockServices.opticore.tag }}"
+        ports:
+        - containerPort: {{ .Values.externalServices.mockServices.opticore.port }}
+          name: http
+          protocol: TCP
+        resources:
+          {{- toYaml .Values.externalServices.mockServices.opticore.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+# OptiCore Mock Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-opticore
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: mock-opticore
+    app.kubernetes.io/name: mock-opticore
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  selector:
+    app: mock-opticore
+  ports:
+  - port: {{ .Values.externalServices.mockServices.opticore.port }}
+    targetPort: {{ .Values.externalServices.mockServices.opticore.port }}
+    protocol: TCP
+    name: http
+---
+# Freya Climb Mock Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-freya-climb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: mock-freya-climb
+    app.kubernetes.io/name: mock-freya-climb
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.externalServices.mockServices.freyaClimb.replicas }}
+  selector:
+    matchLabels:
+      app: mock-freya-climb
+  template:
+    metadata:
+      labels:
+        app: mock-freya-climb
+    spec:
+      containers:
+      - name: freya-climb
+        image: "{{ .Values.externalServices.mockServices.freyaClimb.image }}:{{ .Values.externalServices.mockServices.freyaClimb.tag }}"
+        ports:
+        - containerPort: {{ .Values.externalServices.mockServices.freyaClimb.port }}
+          name: http
+          protocol: TCP
+        resources:
+          {{- toYaml .Values.externalServices.mockServices.freyaClimb.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+# Freya Climb Mock Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-freya-climb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: mock-freya-climb
+    app.kubernetes.io/name: mock-freya-climb
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  selector:
+    app: mock-freya-climb
+  ports:
+  - port: {{ .Values.externalServices.mockServices.freyaClimb.port }}
+    targetPort: {{ .Values.externalServices.mockServices.freyaClimb.port }}
+    protocol: TCP
+    name: http
+---
+# Freya Level Mock Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-freya-level
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: mock-freya-level
+    app.kubernetes.io/name: mock-freya-level
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.externalServices.mockServices.freyaLevel.replicas }}
+  selector:
+    matchLabels:
+      app: mock-freya-level
+  template:
+    metadata:
+      labels:
+        app: mock-freya-level
+    spec:
+      containers:
+      - name: freya-level
+        image: "{{ .Values.externalServices.mockServices.freyaLevel.image }}:{{ .Values.externalServices.mockServices.freyaLevel.tag }}"
+        ports:
+        - containerPort: {{ .Values.externalServices.mockServices.freyaLevel.port }}
+          name: http
+          protocol: TCP
+        resources:
+          {{- toYaml .Values.externalServices.mockServices.freyaLevel.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+# Freya Level Mock Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-freya-level
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: mock-freya-level
+    app.kubernetes.io/name: mock-freya-level
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  selector:
+    app: mock-freya-level
+  ports:
+  - port: {{ .Values.externalServices.mockServices.freyaLevel.port }}
+    targetPort: {{ .Values.externalServices.mockServices.freyaLevel.port }}
+    protocol: TCP
+    name: http
+{{- end }}

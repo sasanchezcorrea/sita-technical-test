@@ -1,0 +1,293 @@
+# OptiFlight Coordinator - Pre-Production Environment Values
+# Phase 14: Release Pipeline & Environments
+#
+# Pre-prod mirrors production with slightly reduced capacity
+
+# Application configuration
+app:
+  name: optiflight-coordinator
+  version: "1.0.0"
+  environment: preprod
+
+# Image configuration
+image:
+  registry: sita
+  repository: optiflight-coordinator
+  tag: ""  # Manually promoted from staging (set by CI/CD)
+  pullPolicy: IfNotPresent
+
+# Replica count (75% of production)
+replicaCount: 2
+
+# Resources (75% of production)
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 250m
+    memory: 512Mi
+
+# Auto-scaling configuration
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Pod labels
+podLabels:
+  app.kubernetes.io/component: job-processor
+  optiflight.sita.aero/tier: control-plane
+  environment: preprod
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8000"
+  prometheus.io/path: "/metrics"
+
+# Ingress configuration for preprod
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: optiflight-preprod.sita.aero
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: optiflight-preprod-tls
+      hosts:
+        - optiflight-preprod.sita.aero
+
+# Environment variables (from ConfigMap)
+envFrom:
+  - configMapRef:
+      name: optiflight-config
+
+# Database configuration (preprod)
+postgresql:
+  enabled: true
+  architecture: replication
+  replicaCount: 1  # 1 replica
+  auth:
+    postgresPassword: "preprod-postgres-pass"
+    username: "optiflight"
+    password: "preprod-optiflight-pass"
+    database: "optiflight_preprod"
+  primary:
+    persistence:
+      enabled: true
+      size: 50Gi
+      storageClass: "gp3"
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+  readReplicas:
+    persistence:
+      enabled: true
+      size: 50Gi
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+  metrics:
+    enabled: true
+  backup:
+    enabled: true
+    cronjob:
+      schedule: "0 3 * * *"
+      storage:
+        size: 100Gi
+    retention:
+      full: 3
+
+# Redis configuration (preprod)
+redis:
+  enabled: true
+  architecture: cluster
+  cluster:
+    enabled: true
+    nodes: 3  # 3 nodes (smaller cluster than prod)
+    replicas: 0  # No replicas
+  auth:
+    enabled: true
+    password: "preprod-redis-pass"
+  master:
+    count: 3
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: "gp3"
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+  sentinel:
+    enabled: true
+    quorum: 2
+  metrics:
+    enabled: true
+
+# Kafka configuration (preprod)
+kafka:
+  enabled: true
+  replicaCount: 3
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: "gp3"
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+  zookeeper:
+    enabled: true
+    replicaCount: 3
+    persistence:
+      enabled: true
+      size: 5Gi
+
+# RabbitMQ configuration (preprod)
+rabbitmq:
+  enabled: true
+  replicaCount: 3
+  auth:
+    username: optiflight
+    password: preprod-rabbitmq-pass
+    erlangCookie: preprod-erlang-cookie
+  clustering:
+    enabled: true
+  persistence:
+    enabled: true
+    size: 25Gi
+    storageClass: "gp3"
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+
+# KEDA configuration (preprod)
+keda:
+  enabled: true
+  kafka:
+    enabled: true
+    minReplicaCount: 2
+    maxReplicaCount: 10
+    topics:
+      - name: optiflight-events
+        lagThreshold: "50"
+  rabbitmq:
+    enabled: true
+    minReplicaCount: 2
+    maxReplicaCount: 10
+    queues:
+      - name: optiflight.events
+        threshold: "50"
+
+# Monitoring
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    interval: 30s
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Affinity rules (spread across nodes)
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - optiflight-coordinator
+        topologyKey: kubernetes.io/hostname
+
+# Backup
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+  retention: "14d"
+
+# External Services Configuration
+externalServices:
+  mode: mock  # "mock" or "real" (switch to real for API testing)
+
+  # Mock services configuration
+  mockServices:
+    enabled: true
+    opticore:
+      image: registry.sita.aero/optiflight/mock-opticore
+      tag: "1.0.0"
+      replicas: 1
+      port: 8001
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    freyaClimb:
+      image: registry.sita.aero/optiflight/mock-freya-climb
+      tag: "1.0.0"
+      replicas: 1
+      port: 8002
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    freyaLevel:
+      image: registry.sita.aero/optiflight/mock-freya-level
+      tag: "1.0.0"
+      replicas: 1
+      port: 8003
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+# CI/CD Integration
+cicd:
+  enabled: true
+  gitops:
+    repository: "https://github.com/sita/optiflight-config"
+    branch: "main"
+    path: "environments/preprod"
